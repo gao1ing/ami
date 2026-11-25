@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.example.ami.mapper.CurveSearchMapper">
+
+    <!-- 时间窗口左闭右开；相同采样时刻继续按设备和曲线类型排序，使固定数据集翻页时顺序稳定。 -->
+    <select id="search"
+            resultType="com.example.ami.mapper.CurveSearchMapper$Row">
+        SELECT d.device_no AS deviceNo,
+        r.curve_type AS curveType,
+        r.sample_time AS sampleTime,
+        r.reading_value AS value
+        FROM curve_reading r
+        JOIN device d ON d.id = r.device_id
+        WHERE r.sample_time >= #{startUtc}
+        AND r.sample_time &lt; #{endUtc}
+
+        <if test="deviceNos != null">
+            AND d.device_no IN
+            <foreach collection="deviceNos" item="deviceNo"
+                     open="(" separator="," close=")">
+                #{deviceNo}
+            </foreach>
+        </if>
+
+        <if test="curveType != null">
+            AND r.curve_type = #{curveType}
+        </if>
+        <if test="minKwh != null">
+            AND r.reading_value >= #{minKwh}
+        </if>
+        <if test="maxKwh != null">
+            AND r.reading_value &lt;= #{maxKwh}
+        </if>
+
+        ORDER BY r.sample_time, r.device_id, r.curve_type
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+</mapper>

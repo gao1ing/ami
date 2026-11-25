@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.ami.mapper.HeartbeatMapper">
+    <!-- 同一设备重复发送同一事件号时保留首次接收时间，防止重试把离线设备续成在线。 -->
+    <insert id="receive">
+        INSERT INTO heartbeat_event(device_id, source_event_id, reported_at, received_at)
+        SELECT id, #{eventId}, #{reported}, UTC_TIMESTAMP(3) FROM device WHERE device_no = #{deviceNo}
+        ON DUPLICATE KEY UPDATE id = heartbeat_event.id
+    </insert>
+    <select id="deviceExists" resultType="boolean">
+        SELECT EXISTS(SELECT 1 FROM device WHERE device_no = #{deviceNo})
+    </select>
+    <select id="lockPending" resultType="long">
+        SELECT id FROM heartbeat_event WHERE processed_at IS NULL
+        ORDER BY id LIMIT #{limit} FOR UPDATE SKIP LOCKED
+    </select>
+    <sql id="eventIds">
+        <foreach collection="ids" item="id" open="(" close=")" separator=",">#{id}</foreach>
+    </sql>
+    <!-- 每台设备只取本批最新的平台接收时间。晚到的旧事件不能覆盖已经更新的快照。 -->
+    <insert id="updateSnapshots">
+        INSERT INTO device_status(device_id, state, last_received_at)
+        SELECT device_id, IF(latest >= UTC_TIMESTAMP(3) - INTERVAL #{timeout} SECOND, 'ONLINE', 'OFFLINE'), latest
+        FROM (SELECT device_id, MAX(received_at) AS latest FROM heartbeat_event
+              WHERE id IN <include refid="eventIds"/> GROUP BY device_id) batch
+        ON DUPLICATE KEY UPDATE
+            state = IF(last_received_at IS NULL OR latest >= last_received_at,
+                       IF(latest >= UTC_TIMESTAMP(3) - INTERVAL #{timeout} SECOND, 'ONLINE', 'OFFLINE'), state),
+            last_received_at = GREATEST(COALESCE(last_received_at, latest), latest)
+    </insert>
+    <update id="markProcessed">
+        UPDATE heartbeat_event SET processed_at = UTC_TIMESTAMP(3) WHERE id IN <include refid="eventIds"/>
+    </update>
+    <!-- 设备已超时，但队列里可能还有新心跳。先检查未处理事件，避免因消费积压误报离线。 -->
+    <update id="expire">
+        UPDATE device_status s SET s.state = 'OFFLINE'
+        WHERE s.state = 'ONLINE' AND s.last_received_at &lt; UTC_TIMESTAMP(3) - INTERVAL #{timeout} SECOND
+          AND NOT EXISTS (SELECT 1 FROM heartbeat_event e WHERE e.device_id = s.device_id
+              AND e.processed_at IS NULL AND e.received_at >= UTC_TIMESTAMP(3) - INTERVAL #{timeout} SECOND)
+    </update>
+    <select id="statuses" resultType="com.example.ami.mapper.HeartbeatMapper$StatusPageRow">
+        SELECT d.id, d.device_no, COALESCE(s.state, 'NEVER'), s.last_received_at
+        FROM device d LEFT JOIN device_status s ON s.device_id = d.id
+        WHERE d.id > #{afterId}
+        <if test="state != null">AND COALESCE(s.state, 'NEVER') = #{state}</if>
+        ORDER BY d.id LIMIT #{limit}
+    </select>
+    <select id="counts" resultType="com.example.ami.mapper.HeartbeatMapper$Count">
+        SELECT COALESCE(s.state, 'NEVER'), COUNT(*) FROM device d
+        LEFT JOIN device_status s ON s.device_id = d.id GROUP BY COALESCE(s.state, 'NEVER')
+    </select>
+</mapper>

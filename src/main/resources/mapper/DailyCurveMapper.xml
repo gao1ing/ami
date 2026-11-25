@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.example.ami.mapper.DailyCurveMapper">
+
+    <select id="findDevice"
+            resultType="com.example.ami.mapper.DailyCurveMapper$Device">
+        SELECT id, device_no AS deviceNo, site_zone AS siteZone
+        FROM device
+        WHERE device_no = #{deviceNo}
+    </select>
+
+    <select id="findReadings"
+            resultType="com.example.ami.mapper.DailyCurveMapper$Reading">
+        SELECT curve_type AS curveType, sample_time AS sampleTime, reading_value AS value
+        FROM curve_reading
+        WHERE device_id = #{deviceId}
+        AND sample_time >= #{startUtc}
+        AND sample_time &lt; #{endUtc}
+        ORDER BY sample_time, curve_type
+    </select>
+
+    <update id="updateReading">
+        UPDATE curve_reading SET reading_value = #{value}
+        WHERE device_id = #{deviceId} AND curve_type = #{curveType} AND sample_time = #{sampleTime}
+    </update>
+</mapper>
